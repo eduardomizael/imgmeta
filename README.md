@@ -1,18 +1,18 @@
-# imgmeta 🖼️🔖
+# imgmeta
 
-**CLI para gerenciar metadados (pessoas e tags) em imagens usando [ExifTool](https://exiftool.org).**
+CLI para gerenciar metadados (pessoas e tags) em imagens usando [ExifTool](https://exiftool.org).
 
-Permite **adicionar, remover, limpar, listar e buscar** valores em campos XMP/IPTC como:
+Permite adicionar, remover, limpar, listar, buscar e inspecionar valores em campos XMP/IPTC como:
 
-* **Pessoas em imagem** (`XMP-Iptc4xmpExt:PersonInImage`)
-* **Tags/keywords** (`XMP-dc:Subject` e `IPTC:Keywords`)
+- Pessoas em imagem: `XMP-Iptc4xmpExt:PersonInImage`
+- Tags/keywords: `XMP-dc:Subject` e `IPTC:Keywords`
 
 ---
 
-## ⚙️ Requisitos
+## Requisitos
 
-* Python **3.8+**
-* [ExifTool](https://exiftool.org) instalado e disponível no `PATH`
+- Python 3.12+
+- [ExifTool](https://exiftool.org) instalado e disponível no `PATH`
 
 Verifique com:
 
@@ -22,43 +22,34 @@ exiftool -ver
 
 ---
 
-## 🚀 Instalação
+## Instalação (local)
 
-Clone o repositório e torne o script executável:
+Clone o repositório:
 
 ```bash
 git clone https://github.com/usuario/imgmeta.git
 cd imgmeta
-chmod +x imgmeta.py
 ```
 
-Rode com:
+Execute:
 
 ```bash
-./imgmeta.py --help
-```
-
-Ou via Python:
-
-```bash
-python imgmeta.py --help
+python imgmeta/imgmeta.py --help
+# ou, se estiver instalado como pacote/entrypoint
+imgmeta --help
 ```
 
 ---
 
-## 📦 Instalação Global
+## Instalação global (uv)
 
-Além de rodar o script manualmente, você pode instalar como comando global usando **`uv`**.
-
-### 🔹 Usando uv
-
-[`uv`](https://github.com/astral-sh/uv) é uma alternativa rápida:
+Usando [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
 uv tool install git+https://github.com/usuario/imgmeta.git
 ```
 
-Ou se quiser rodar sem instalar globalmente:
+Ou rode sem instalar globalmente:
 
 ```bash
 uvx git+https://github.com/usuario/imgmeta.git -- --help
@@ -66,7 +57,7 @@ uvx git+https://github.com/usuario/imgmeta.git -- --help
 
 ---
 
-## 📖 Uso
+## Uso
 
 ### Sintaxe geral
 
@@ -76,15 +67,17 @@ imgmeta [opções globais] <comando> [argumentos]
 
 ### Opções globais
 
-| Opção             | Descrição                                                       |
-| ----------------- | --------------------------------------------------------------- |
-| `--ext EXT ...`   | Extensões aceitáveis (default: jpg, jpeg, png, heic, tif, tiff) |
+| Opção             | Descrição                                                        |
+| ----------------- | ---------------------------------------------------------------- |
+| `--ext EXT ...`   | Extensões aceitáveis (sem ponto). Default: jpg jpeg png heic tif tiff |
 | `-r, --recursive` | Percorre diretórios recursivamente                              |
 | `-q, --quiet`     | Saída reduzida                                                  |
 
+Nota: `--people` também aceita o alias `--pessoas`.
+
 ---
 
-## 🔧 Comandos
+## Comandos
 
 ### 1. Adicionar pessoas/tags
 
@@ -120,9 +113,9 @@ imgmeta remove fotos/ --tags praia
 imgmeta clear <arquivos/pastas> [--people] [--tags]
 ```
 
-* `--people` → limpa somente pessoas
-* `--tags` → limpa somente tags
-* se nenhum for passado → **não faz nada** (proteção)
+- `--people`: limpa somente pessoas
+- `--tags`: limpa somente tags
+- se nenhum for passado, não faz nada (proteção)
 
 Exemplo:
 
@@ -135,7 +128,7 @@ imgmeta clear fotos/ --tags
 ### 4. Listar metadados
 
 ```bash
-imgmeta list <arquivos/pastas>
+imgmeta list <arquivos/pastas> [--json]
 ```
 
 Exemplo:
@@ -144,7 +137,7 @@ Exemplo:
 imgmeta list fotos/ -r
 ```
 
-Saída:
+Saída (modo texto):
 
 ```
 fotos/img1.jpg
@@ -152,17 +145,20 @@ fotos/img1.jpg
   tags   : viagem, praia
 ```
 
+Com `--json`, imprime um array JSON com campos `file`, `people`, `tags`.
+
 ---
 
 ### 5. Buscar imagens
 
 ```bash
-imgmeta search <arquivos/pastas> [--people NOME ...] [--tags TAG ...] [--mode any|all] [--show-meta]
+imgmeta search <arquivos/pastas> [--people NOME ...] [--tags TAG ...] [--mode any|all] [--show-meta] [--json]
 ```
 
-* `--mode any` → corresponde a **qualquer** item (default)
-* `--mode all` → corresponde a **todos** os itens
-* `--show-meta` → exibe também os metadados
+- `--mode any`: corresponde a qualquer item (default)
+- `--mode all`: corresponde a todos os itens
+- `--show-meta`: exibe também os metadados ao listar resultados
+- `--json`: saída em JSON dos resultados
 
 Exemplo:
 
@@ -172,7 +168,22 @@ imgmeta search fotos/ --people "Maria Silva" --tags praia --mode all --show-meta
 
 ---
 
-## ⚡ Exemplos rápidos
+### 6. Inspecionar/abrir um arquivo
+
+```bash
+imgmeta show <arquivo> [--open] [--thumb] [--json]
+```
+
+- Sem opções: imprime metadados do arquivo (texto)
+- `--json`: imprime metadados em JSON
+- `--open`: abre a imagem no visualizador padrão do sistema
+- `--thumb`: com `--open`, abre a miniatura embutida (`ThumbnailImage`) em vez do arquivo original
+
+Observação: `--thumb` requer que a imagem tenha `ThumbnailImage` embutida; caso contrário, ocorre erro ao extrair.
+
+---
+
+## Exemplos rápidos
 
 Adicionar uma tag:
 
@@ -200,7 +211,7 @@ imgmeta search fotos/ --people João --tags viagem --mode all
 
 ---
 
-## 📜 Saída típica
+## Saída típica
 
 ```bash
 [add] fotos/img1.jpg
@@ -210,6 +221,7 @@ Concluído: 2 arquivo(s).
 
 ---
 
-## 📄 Licença
+## Licença
 
 Uso livre. Cite o autor se for redistribuir.
+

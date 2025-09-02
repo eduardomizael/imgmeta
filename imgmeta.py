@@ -164,7 +164,6 @@ def cmd_list(args):
         if not args.quiet:
             print()
 
-
 def cmd_search(args):
     check_exiftool()
     results = []
