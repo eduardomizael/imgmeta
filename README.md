@@ -66,8 +66,6 @@ uvx git+https://github.com/usuario/imgmeta.git -- --help
 
 ---
 
-
-
 ## 📖 Uso
 
 ### Sintaxe geral

@@ -5,6 +5,8 @@ from shutil import which
 from pathlib import Path
 import json
 import sys
+import tempfile, webbrowser, os, platform
+
 
 EXIFTOOL = "exiftool"
 
@@ -140,8 +142,18 @@ def cmd_clear(args):
 
 def cmd_list(args):
     check_exiftool()
+    items = []
     for f in iter_targets(args.paths, args.recursive, args.ext):
         meta = read_values(f)
+        items.append(meta)
+
+    # Se pediu JSON, imprime tudo em formato estruturado
+    if getattr(args, "json", False):
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+        return
+
+    # Caso contrário, saída "bonita" em texto
+    for meta in items:
         print(meta["file"])
         if meta["people"]:
             print("  pessoas:", ", ".join(meta["people"]))
@@ -151,6 +163,7 @@ def cmd_list(args):
             print("  (sem pessoas/tags)")
         if not args.quiet:
             print()
+
 
 def cmd_search(args):
     check_exiftool()
@@ -163,6 +176,13 @@ def cmd_search(args):
         tags_all = args.tags if args.mode == "all" else None
         if matches_filters(meta, people_any, people_all, tags_any, tags_all):
             results.append(meta)
+
+    # Se pediu JSON, imprime todos os resultados de forma estruturada
+    if getattr(args, "json", False):
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+
+    # Saída textual (como era antes)
     for m in results:
         print(m["file"])
         if args.show_meta:
@@ -172,6 +192,70 @@ def cmd_search(args):
                 print("  tags   :", ", ".join(m["tags"]))
             print()
     print(f"Total: {len(results)} arquivo(s).")
+
+def open_in_viewer(path: Path):
+    # tentar no navegador (funciona bem para imagens)
+    try:
+        webbrowser.open(path.resolve().as_uri())
+        return
+    except Exception:
+        pass
+    # fallback por SO
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.run(["open", str(path)])
+    elif system == "Windows":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    else:
+        subprocess.run(["xdg-open", str(path)])
+
+def extract_thumbnail_to_temp(path: Path) -> Path:
+    # extrai ThumbnailImage com exiftool (-b = binary) e salva num arquivo temporário
+    tmp = Path(tempfile.mkstemp(suffix=".jpg")[1])
+    out = subprocess.run(
+        [EXIFTOOL, "-b", "-ThumbnailImage", str(path)],
+        capture_output=True
+    )
+    if out.returncode != 0 or not out.stdout:
+        raise RuntimeError("Sem miniatura embutida (ThumbnailImage) ou erro ao extrair.")
+    with open(tmp, "wb") as f:
+        f.write(out.stdout)
+    return tmp
+
+def cmd_show(args):
+    check_exiftool()
+    if len(args.paths) != 1:
+        print("Use exatamente um arquivo no comando 'show'.", file=sys.stderr)
+        sys.exit(2)
+
+    f = next(iter_targets(args.paths, False, args.ext), None)
+    if not f:
+        print("Arquivo não encontrado ou extensão não permitida.", file=sys.stderr)
+        sys.exit(2)
+
+    meta = read_values(f)
+
+    if args.json:
+        print(json.dumps(meta, ensure_ascii=False, indent=2))
+    else:
+        print(meta["file"])
+        if meta["people"]:
+            print("  pessoas:", ", ".join(meta["people"]))
+        if meta["tags"]:
+            print("  tags   :", ", ".join(meta["tags"]))
+        if not meta["people"] and not meta["tags"]:
+            print("  (sem pessoas/tags)")
+
+    if args.open:
+        try:
+            if args.thumb:
+                thumb_path = extract_thumbnail_to_temp(Path(meta["file"]))
+                open_in_viewer(thumb_path)
+            else:
+                open_in_viewer(Path(meta["file"]))
+        except Exception as e:
+            print(f"Falha ao abrir: {e}", file=sys.stderr)
+            sys.exit(3)
 
 def build_parser():
     p = argparse.ArgumentParser(
@@ -213,11 +297,21 @@ def build_parser():
 
     sp_list = sub.add_parser("list", help="Lista pessoas/tags dos arquivos.")
     add_common_targets(sp_list)
+    sp_list.add_argument("--json", action="store_true", help="Saída em JSON.")
 
     sp_search = sub.add_parser("search", help="Busca imagens por pessoas/tags.")
     add_common_targets(sp_search)
     add_people_tags(sp_search, need_any=True)
     sp_search.add_argument("--show-meta", action="store_true", help="Exibe metadados nos resultados.")
+    sp_search.add_argument("--json", action="store_true", help="Saída em JSON.")
+
+    sp_show = sub.add_parser("show", help="Mostra metadados de um único arquivo e opcionalmente abre a imagem.")
+    sp_show.add_argument("paths", nargs=1, help="Arquivo alvo (somente um).")
+    sp_show.add_argument("--open", action="store_true", help="Abre a imagem (ou miniatura) no visualizador padrão.")
+    sp_show.add_argument("--thumb", action="store_true", help="Com --open, abre a ThumbnailImage embutida.")
+    sp_show.add_argument("--json", action="store_true", help="Saída em JSON.")
+    sp_show.add_argument("--ext", nargs="*", default=["jpg","jpeg","png","heic","tif","tiff"],
+                         help="Extensões aceitáveis (sem ponto).")
 
     return p
 
@@ -236,6 +330,8 @@ def main():
             cmd_list(args)
         elif args.cmd == "search":
             cmd_search(args)
+        elif args.cmd == "show":
+            cmd_show(args)
         else:
             parser.print_help()
     except RuntimeError as e:
