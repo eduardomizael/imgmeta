@@ -11,7 +11,7 @@ except Exception:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import imgmeta as core  # type: ignore
 
-# Preview opcional com Pillow
+# Pillow para geração de miniaturas
 try:
     from PIL import Image, ImageTk  # type: ignore
     PIL_AVAILABLE = True
@@ -95,11 +95,15 @@ class App(tk.Tk):
             self.thumb_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
             # reflow ao redimensionar
             self.thumb_canvas.bind("<Configure>", self._on_thumb_canvas_configure)
+            # abrir com Enter
+            self.thumb_canvas.bind("<Return>", lambda e: self._open_current(False))
         else:
             # Fallback: Listbox textual
             self.file_list = tk.Listbox(left_mid, activestyle="dotbox", selectmode=tk.EXTENDED)
             self.file_list.pack(fill=tk.BOTH, expand=True)
             self.file_list.bind("<<ListboxSelect>>", self._on_select_file)
+            self.file_list.bind("<Double-Button-1>", lambda e: self._open_current(False))
+            self.file_list.bind("<Return>", lambda e: self._open_current(False))
 
         # Botões inferiores da coluna esquerda
         btns_left = ttk.Frame(left)
@@ -153,14 +157,6 @@ class App(tk.Tk):
         grid.rowconfigure(1, weight=1)
         grid.columnconfigure(0, weight=1)
         grid.columnconfigure(1, weight=1)
-
-        # Preview
-        preview_box = ttk.Frame(right)
-        preview_box.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        ttk.Label(preview_box, text="Preview").pack(anchor=tk.W)
-        self.preview_area = tk.Label(preview_box, relief=tk.SUNKEN, anchor=tk.CENTER)
-        self.preview_area.config(width=48, height=16)  # dimensão em caracteres; apenas placeholder
-        self.preview_area.pack(fill=tk.BOTH, expand=True)
 
         # Ações
         actions = ttk.Frame(right)
@@ -243,7 +239,6 @@ class App(tk.Tk):
         self.tags_list.delete(0, tk.END)
         if not path:
             self.path_label.config(text="(nenhum arquivo)")
-            self._set_preview(None)
             return
         # Quando múltiplos arquivos estão selecionados, mostramos apenas o primeiro na prévia
         label = str(path) if len(paths) <= 1 else f"{len(paths)} arquivo(s) selecionado(s) — mostrando: {path.name}"
@@ -252,14 +247,13 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Erro ao ler metadados", str(e))
             self.path_label.config(text=label)
-            self._set_preview(None)
             return
         self.path_label.config(text=label)
         for v in meta.get("people", []):
             self.people_list.insert(tk.END, v)
         for v in meta.get("tags", []):
             self.tags_list.insert(tk.END, v)
-        self._set_preview(path)
+
 
     # Miniaturas
     def _on_mousewheel(self, event):
@@ -300,6 +294,11 @@ class App(tk.Tk):
                 def _h(ev=None):
                     ctrl = (ev.state & 0x0004) != 0 if ev is not None else False
                     self._handle_tile_click(i, additive=ctrl)
+                    # focar canvas para permitir Enter
+                    try:
+                        self.thumb_canvas.focus_set()
+                    except Exception:
+                        pass
                 return _h
             for w in (tile, img_label, name_label):
                 w.bind("<Button-1>", make_handler())
@@ -504,43 +503,7 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Falha ao abrir", str(e))
 
-    # Preview helpers
-    def _set_preview(self, path: Path | None):
-        if not PIL_AVAILABLE:
-            self.preview_area.config(text="Pillow não instalado. Preview indisponível.")
-            self.preview_area.image = None
-            return
-        if not path:
-            self.preview_area.config(text="", image="")
-            self.preview_area.image = None
-            return
-        # Tenta miniatura embutida; se falhar, usa a própria imagem
-        img_path = None
-        tmp_to_remove = None
-        try:
-            try:
-                tmp = core.extract_thumbnail_to_temp(path)
-                img_path = tmp
-                tmp_to_remove = tmp
-            except Exception:
-                img_path = path
-            if img_path is None:
-                raise RuntimeError("Sem caminho de imagem")
-            im = Image.open(img_path)
-            im.thumbnail((512, 512))
-            tkimg = ImageTk.PhotoImage(im)
-            self.preview_area.config(image=tkimg, text="")
-            self.preview_area.image = tkimg  # manter referência
-        except Exception:
-            self.preview_area.config(text="Falha ao carregar preview.", image="")
-            self.preview_area.image = None
-        finally:
-            # remove o thumb temporário, se criado
-            try:
-                if tmp_to_remove:
-                    Path(tmp_to_remove).unlink(missing_ok=True)
-            except Exception:
-                pass
+    # (preview removido a pedido do usuário)
 
     def _apply_add_selected(self):
         paths = self._get_selected_paths()
