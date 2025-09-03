@@ -66,13 +66,48 @@ class App(tk.Tk):
         body = ttk.Frame(self, padding=(8, 0, 8, 8))
         body.pack(fill=tk.BOTH, expand=True)
 
-        # Lista de arquivos (esquerda)
+        # Lista de arquivos como miniaturas (esquerda)
         left = ttk.Frame(body)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ttk.Label(left, text="Arquivos").pack(anchor=tk.W)
-        self.file_list = tk.Listbox(left, activestyle="dotbox", selectmode=tk.EXTENDED)
-        self.file_list.pack(fill=tk.BOTH, expand=True)
-        self.file_list.bind("<<ListboxSelect>>", self._on_select_file)
+        left_mid = ttk.Frame(left)
+        left_mid.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.use_thumbs = PIL_AVAILABLE
+        self.thumb_items: list[dict] = []  # para modo miniatura
+        # parâmetros de miniatura
+        self._thumb_size = (160, 160)
+        self._thumb_pad = 6
+        self._thumb_cols = 1
+        if self.use_thumbs:
+            # Canvas com rolagem e um frame interno para as miniaturas
+            self.thumb_canvas = tk.Canvas(left_mid, highlightthickness=0)
+            self.thumb_scroll = ttk.Scrollbar(left_mid, orient="vertical", command=self.thumb_canvas.yview)
+            self.thumb_canvas.configure(yscrollcommand=self.thumb_scroll.set)
+            self.thumb_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            self.thumb_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+            self.thumb_frame = ttk.Frame(self.thumb_canvas)
+            self.thumb_window_id = self.thumb_canvas.create_window((0, 0), window=self.thumb_frame, anchor="nw")
+            self.thumb_frame.bind(
+                "<Configure>",
+                lambda e: self.thumb_canvas.configure(scrollregion=self.thumb_canvas.bbox("all"))
+            )
+            # suporte a rolagem com roda do mouse
+            self.thumb_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+            # reflow ao redimensionar
+            self.thumb_canvas.bind("<Configure>", self._on_thumb_canvas_configure)
+        else:
+            # Fallback: Listbox textual
+            self.file_list = tk.Listbox(left_mid, activestyle="dotbox", selectmode=tk.EXTENDED)
+            self.file_list.pack(fill=tk.BOTH, expand=True)
+            self.file_list.bind("<<ListboxSelect>>", self._on_select_file)
+
+        # Botões inferiores da coluna esquerda
+        btns_left = ttk.Frame(left)
+        btns_left.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0))
+        ttk.Button(btns_left, text="Atualizar seleção", command=self.refresh_current).pack(side=tk.LEFT)
+        ttk.Button(btns_left, text="Abrir seleção", command=self._open_selection).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(btns_left, text="Abrir imagem", command=lambda: self._open_current(False)).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(btns_left, text="Abrir miniatura", command=lambda: self._open_current(True)).pack(side=tk.LEFT, padx=(6, 0))
 
         btns_left = ttk.Frame(left)
         btns_left.pack(fill=tk.X, pady=(6, 0))
@@ -163,23 +198,33 @@ class App(tk.Tk):
         exts = self._exts() or DEFAULT_EXTS
         self.files = list(core.iter_targets([base], recursive=self.recursive_var.get(), exts=exts))
         self.files.sort()
-        self.file_list.delete(0, tk.END)
-        for p in self.files:
-            # exibe caminho relativo à pasta base
-            try:
-                label = str(p.relative_to(base))
-            except Exception:
-                label = str(p)
-            self.file_list.insert(tk.END, label)
+        if self.use_thumbs:
+            self._render_thumbnails()
+        else:
+            self.file_list.delete(0, tk.END)
+            for p in self.files:
+                try:
+                    label = str(p.relative_to(base))
+                except Exception:
+                    label = str(p)
+                self.file_list.insert(tk.END, label)
         self.status_var.set(f"{len(self.files)} arquivo(s) carregado(s)")
         if self.files:
-            self.file_list.selection_clear(0, tk.END)
-            self.file_list.selection_set(0)
-            self._on_select_file()
+            if self.use_thumbs:
+                # seleciona o primeiro automaticamente
+                if self.thumb_items:
+                    self._set_tile_selected(self.thumb_items[0], True)
+                    self._update_selection_meta()
+            else:
+                self.file_list.selection_clear(0, tk.END)
+                self.file_list.selection_set(0)
+                self._on_select_file()
         else:
-            self._show_meta(None)
+            self._show_meta([])
 
     def _get_selected_paths(self) -> list[Path]:
+        if self.use_thumbs:
+            return [it["path"] for it in self.thumb_items if it.get("selected")]
         sel = self.file_list.curselection()
         out: list[Path] = []
         for idx in sel:
@@ -215,6 +260,158 @@ class App(tk.Tk):
         for v in meta.get("tags", []):
             self.tags_list.insert(tk.END, v)
         self._set_preview(path)
+
+    # Miniaturas
+    def _on_mousewheel(self, event):
+        if not self.use_thumbs:
+            return
+        # Windows: event.delta é múltiplo de 120
+        delta = int(-1 * (event.delta / 120) * 30)
+        self.thumb_canvas.yview_scroll(delta, "units")
+
+    def _render_thumbnails(self):
+        # limpa itens antigos
+        for child in list(self.thumb_frame.winfo_children()):
+            child.destroy()
+        self.thumb_items.clear()
+
+        # cria itens (posicionamento será feito por _layout_thumbnails)
+        for idx, p in enumerate(self.files):
+            tile = tk.Frame(self.thumb_frame, bd=2, relief=tk.RIDGE, bg="#f0f0f0")
+            # grid será ajustado depois
+            # imagem
+            img_label = tk.Label(tile, bg="#ddd")
+            img_label.pack(fill=tk.BOTH, expand=True)
+            photo = self._make_thumb_image(p, self._thumb_size)
+            if photo is not None:
+                img_label.config(image=photo)
+            else:
+                img_label.config(text="(sem preview)")
+
+            # texto
+            name_label = tk.Label(tile, text=p.name, bg="#f0f0f0")
+            name_label.pack(fill=tk.X)
+
+            item = {"path": p, "frame": tile, "img": img_label, "name": name_label, "photo": photo, "selected": False}
+            self.thumb_items.append(item)
+
+            # binds
+            def make_handler(i=item):
+                def _h(ev=None):
+                    ctrl = (ev.state & 0x0004) != 0 if ev is not None else False
+                    self._handle_tile_click(i, additive=ctrl)
+                return _h
+            for w in (tile, img_label, name_label):
+                w.bind("<Button-1>", make_handler())
+                w.bind("<Double-Button-1>", lambda e, pp=p: self._open_path(pp))
+
+        self._layout_thumbnails()
+
+    def _set_tile_selected(self, item: dict, value: bool):
+        item["selected"] = value
+        if value:
+            item["frame"].config(bg="#98c1ff")
+            item["name"].config(bg="#98c1ff")
+        else:
+            item["frame"].config(bg="#f0f0f0")
+            item["name"].config(bg="#f0f0f0")
+
+    def _handle_tile_click(self, item: dict, additive: bool = False):
+        if not additive:
+            # limpa seleção atual
+            for it in self.thumb_items:
+                self._set_tile_selected(it, False)
+        # alterna item
+        self._set_tile_selected(item, not item.get("selected"))
+        self._update_selection_meta()
+
+    def _update_selection_meta(self):
+        paths = [it["path"] for it in self.thumb_items if it.get("selected")]
+        self._show_meta(paths)
+
+    def _open_path(self, path: Path):
+        try:
+            core.open_in_viewer(path)
+        except Exception as e:
+            messagebox.showerror("Falha ao abrir", str(e))
+
+    def _make_thumb_image(self, path: Path, size: tuple[int, int]):
+        if not PIL_AVAILABLE:
+            return None
+        try:
+            try:
+                from PIL import ImageOps  # type: ignore
+            except Exception:
+                ImageOps = None  # type: ignore
+            # tenta abrir a própria imagem
+            im = Image.open(path)
+            if "exif" in im.info and 'getexif' in dir(im) and ImageOps is not None:
+                try:
+                    im = ImageOps.exif_transpose(im)
+                except Exception:
+                    pass
+        except Exception:
+            # fallback para miniatura via exiftool
+            try:
+                tmp = core.extract_thumbnail_to_temp(path)
+                im = Image.open(tmp)
+                try:
+                    Path(tmp).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            except Exception:
+                return None
+        try:
+            im.thumbnail(size)
+            return ImageTk.PhotoImage(im)
+        except Exception:
+            return None
+
+    def _on_thumb_canvas_configure(self, event):
+        # manter frame com a mesma largura do canvas e refazer layout
+        try:
+            self.thumb_canvas.itemconfigure(self.thumb_window_id, width=event.width)
+        except Exception:
+            pass
+        self._layout_thumbnails(event.width)
+
+    def _layout_thumbnails(self, width: int | None = None):
+        if not self.thumb_items:
+            return
+        if width is None:
+            try:
+                width = int(self.thumb_canvas.winfo_width())
+            except Exception:
+                width = 600
+        tile_w = self._thumb_size[0]
+        pad = self._thumb_pad
+        # estimativa de largura por coluna: tile + paddings + borda
+        col_w = tile_w + pad * 2 + 8
+        cols = max(1, width // max(1, col_w))
+        if cols != self._thumb_cols:
+            self._thumb_cols = cols
+        # limpar grid atual
+        for it in self.thumb_items:
+            it["frame"].grid_forget()
+        # aplicar novo grid
+        for idx, it in enumerate(self.thumb_items):
+            r = idx // self._thumb_cols
+            c = idx % self._thumb_cols
+            it["frame"].grid(row=r, column=c, padx=pad, pady=pad, sticky="nsew")
+        # expandir colunas
+        for c in range(self._thumb_cols):
+            self.thumb_frame.grid_columnconfigure(c, weight=1)
+
+    def _open_selection(self):
+        paths = self._get_selected_paths()
+        if not paths:
+            return
+        # abrir de forma sequencial (sistema deve gerenciar múltiplas janelas)
+        for p in paths:
+            try:
+                core.open_in_viewer(p)
+            except Exception as e:
+                messagebox.showerror("Falha ao abrir", f"{p}: {e}")
 
     def refresh_current(self):
         self._show_meta([self.current_path] if self.current_path else [])
